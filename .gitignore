@@ -1,0 +1,12 @@
+blib
+Makefile
+pm_to_blib
+*-stamp
+*.tar.gz
+*.old
+*.bak
+*.swp
+*~
+META.yml
+MYMETA.yml
+MYMETA.json

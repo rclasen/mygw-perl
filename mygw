@@ -1,0 +1,126 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+BEGIN {
+#	$ENV{ANYEVENT_MYGW_DEBUG} = 1;
+}
+
+use AnyEvent::Loop;
+use AnyEvent::MyGw qw/:constants/;
+use Data::Dumper;
+use Devel::Cycle;
+use Scalar::Util;
+use Devel::Leak;
+use Sub::Name;
+
+my $handle;
+#my $count = Devel::Leak::NoteSV($handle);
+
+
+my $done;
+
+my $mygw = AnyEvent::MyGw->new(
+	host		=> "schalt",
+	port		=> 2001,
+	on_connected	=> subname( on_connected => sub {
+		my( $self ) = @_;
+		my( $lp, $lh ) = $self->getsockname;
+		print STDERR "connected from $lh:$lp\n";
+	}),
+	on_error	=> subname( on_error => sub {
+		my( $msg, $self ) = @_;
+		print STDERR "error: $msg\n";
+	}),
+	on_disconnect	=> subname( on_disconnect => sub {
+		print STDERR "disconnected\n";
+	}),
+
+	on_idrequest	=> subname( on_idrequest => sub {
+		my( $gw, $m ) = @_;
+		print STDERR "idrequest\n";
+	}),
+	on_fwstart	=> subname( on_fwstart => sub {
+		my( $gw, $type, $ver ) = @_;
+
+		print STDERR "fwstart $type $ver\n";
+	}),
+	on_present	=> subname( on_present => sub {
+		my( $gw, $m ) = @_;
+		print STDERR "present $m->{node}:$m->{child}\n";
+	}),
+#	on_activity	=> subname( on_activity => sub {
+#		my( $gw, $node ) = @_;
+#		print STDERR "activity $node\n";
+#	}),
+	on_battery	=> subname( on_battery => sub {
+		my( $gw, $m ) = @_;
+		print STDERR "battery: $m->{node} = $m->{payload}\n";
+	}),
+	on_msg		=> subname( on_msg => sub {
+		my( $gw, $m ) = @_;
+		print STDERR "msg from $m->{node}:$m->{child}\n";
+	}),
+);
+
+Scalar::Util::weaken( my $weak = $mygw );
+
+my $a = AnyEvent->timer(
+	after	=> 40,
+	interval	=> 60,
+	cb	=> subname( time_broadcast  => sub {
+		$weak->sendTime;
+	}),
+);
+my $b = AnyEvent->timer(
+	after	=> 240,
+	cb	=> subname( terminate => sub {
+		++$done;
+	}),
+);
+
+my( $x, $y );
+my $c = AnyEvent->timer(
+	after	=> 5,
+	interval => 5,
+	cb	=> subname( enqueue => sub {
+		$x ||= $weak->sendRaw({
+			node	=> 102,
+			child	=> 200,
+			cmd	=> C_REQ,
+			type	=> V_CUSTOM,
+			payload	=> "HELLO",
+			ack	=> 1,
+			cb	=> subname( ack_102 => sub {
+				print STDERR ($_[1] ? "ACK 102\n" : "NACK 102\n");
+				undef $x;
+			}),
+			doqueue	=> 1,
+		});
+
+		$y ||= $weak->sendRaw({
+			node	=> 100,
+			child	=> 200,
+			cmd	=> C_REQ,
+			type	=> V_CUSTOM,
+			payload	=> "HELLO",
+			ack	=> 1,
+			cb	=> subname( ack_100 => sub {
+				print STDERR ($_[1] ? "ACK 100\n" : "NACK 100\n");
+				undef $y;
+			}),
+			doqueue	=> 0,
+		});
+	}),
+);
+
+while( ! $done ){
+	AnyEvent::Loop::one_event;
+}
+
+find_cycle( $mygw);
+undef $mygw;
+
+#Devel::Leak::CheckSV($handle);
+
